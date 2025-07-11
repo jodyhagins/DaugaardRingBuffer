@@ -66,5 +66,5 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(DaugaardRingBuffer)
 
 # Then, when referencing it
-target_link_libraries(my_target PRIVATE wjh::ipc)
+target_link_libraries(my_target PRIVATE daugaard::ring_buffer)
 ```
