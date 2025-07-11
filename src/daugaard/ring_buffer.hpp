@@ -3,31 +3,86 @@
 
 #include <algorithm>
 #include <atomic>
+#include <new>
+#include <stdexcept>
 
-#ifndef FORCE_INLINE
+#ifndef DAUGAARD_RING_BUFFER_FORCE_INLINE
     #if defined(_MSC_VER)
-        #define FORCE_INLINE __forceinline
+        #define DAUGAARD_RING_BUFFER_FORCE_INLINE __forceinline
     #elif defined(__GNUC__)
-        #define FORCE_INLINE inline __attribute__((always_inline))
+        #define DAUGAARD_RING_BUFFER_FORCE_INLINE \
+            inline __attribute__((always_inline))
     #else
-        #define FORCE_INLINE inline
+        #define DAUGAARD_RING_BUFFER_FORCE_INLINE inline
     #endif
 #endif
 
-#define CACHE_LINE_SIZE 64
+#if not defined(DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE)
+    #if defined(__cpp_lib_hardware_interference_size)
+        #define DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE \
+            (std::hardware_destructive_interference_size)
+    #else
+        #error "cache line size is not defined"
+    #endif
+#endif
+
+#include <cstdio>
+#include <cstdlib>
+
+#if defined(__APPLE__)
+    #include <sys/sysctl.h>
+
+namespace daugaard::detail {
+inline std::size_t
+get_runtime_cache_line_size()
+{
+    std::int64_t line_size = -1;
+    std::size_t size = sizeof(line_size);
+    sysctlbyname("hw.cachelinesize", &line_size, &size, nullptr, 0);
+    return static_cast<std::size_t>(line_size);
+}
+} // namespace daugaard::detail
+#elif defined(__linux__)
+    #include <unistd.h>
+
+namespace daugaard::detail {
+inline std::size_t
+get_runtime_cache_line_size()
+{
+    long line_size = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
+    if (line_size <= 0) {
+        return static_cast<std::size_t>(-1);
+    }
+    return static_cast<std::size_t>(line_size);
+}
+} // namespace daugaard::detail
+#else
+namespace daugaard::detail {
+inline std::size_t
+get_runtime_cache_line_size()
+{
+    return static_cast<std::size_t>(-1);
+}
+} // namespace daugaard::detail
+#endif
+
+
+namespace daugaard {
 
 class RingBuffer
 {
 public:
     // Allocate buffer space for writing.
-    FORCE_INLINE void * PrepareWrite(size_t size, size_t alignment);
+    DAUGAARD_RING_BUFFER_FORCE_INLINE void * PrepareWrite(
+        size_t size,
+        size_t alignment);
 
     // Publish written data.
-    FORCE_INLINE void FinishWrite();
+    DAUGAARD_RING_BUFFER_FORCE_INLINE void FinishWrite();
 
     // Write an element to the buffer.
     template <typename T>
-    FORCE_INLINE void Write(T const & value)
+    DAUGAARD_RING_BUFFER_FORCE_INLINE void Write(T const & value)
     {
         void * dest = PrepareWrite(sizeof(T), alignof(T));
         new (dest) T(value);
@@ -35,7 +90,9 @@ public:
 
     // Write an array of elements to the buffer.
     template <typename T>
-    FORCE_INLINE void WriteArray(T const * values, size_t count)
+    DAUGAARD_RING_BUFFER_FORCE_INLINE void WriteArray(
+        T const * values,
+        size_t count)
     {
         void * dest = PrepareWrite(sizeof(T) * count, alignof(T));
         for (size_t i = 0; i < count; i++) {
@@ -44,14 +101,16 @@ public:
     }
 
     // Get read pointer. Size and alignment should match written data.
-    FORCE_INLINE void * PrepareRead(size_t size, size_t alignment);
+    DAUGAARD_RING_BUFFER_FORCE_INLINE void * PrepareRead(
+        size_t size,
+        size_t alignment);
 
     // Finish and make buffer space available to writer.
-    FORCE_INLINE void FinishRead();
+    DAUGAARD_RING_BUFFER_FORCE_INLINE void FinishRead();
 
     // Read an element from the buffer.
     template <typename T>
-    FORCE_INLINE const T & Read()
+    DAUGAARD_RING_BUFFER_FORCE_INLINE const T & Read()
     {
         void * src = PrepareRead(sizeof(T), alignof(T));
         return *static_cast<T *>(src);
@@ -59,7 +118,7 @@ public:
 
     // Read an array of elements from the buffer.
     template <typename T>
-    FORCE_INLINE const T * ReadArray(size_t count)
+    DAUGAARD_RING_BUFFER_FORCE_INLINE const T * ReadArray(size_t count)
     {
         void * src = PrepareRead(sizeof(T) * count, alignof(T));
         return static_cast<T *>(src);
@@ -69,6 +128,11 @@ public:
     // two.
     void Initialize(void * buffer, size_t size)
     {
+        if (detail::get_runtime_cache_line_size() !=
+            DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE)
+        {
+            throw std::runtime_error("wrong cache line size");
+        }
         Reset();
         m_Reader.buffer = m_Writer.buffer = static_cast<char *>(buffer);
         m_Reader.size = m_Writer.size = m_Writer.end = size;
@@ -81,7 +145,9 @@ public:
     }
 
 private:
-    FORCE_INLINE static size_t Align(size_t pos, size_t alignment)
+    DAUGAARD_RING_BUFFER_FORCE_INLINE static size_t Align(
+        size_t pos,
+        size_t alignment)
     {
 #ifdef RINGBUFFER_DO_NOT_ALIGN
         alignment = 1;
@@ -89,11 +155,15 @@ private:
         return (pos + alignment - 1) & ~(alignment - 1);
     }
 
-    FORCE_INLINE void GetBufferSpaceToWriteTo(size_t & pos, size_t & end);
-    FORCE_INLINE void GetBufferSpaceToReadFrom(size_t & pos, size_t & end);
+    DAUGAARD_RING_BUFFER_FORCE_INLINE void GetBufferSpaceToWriteTo(
+        size_t & pos,
+        size_t & end);
+    DAUGAARD_RING_BUFFER_FORCE_INLINE void GetBufferSpaceToReadFrom(
+        size_t & pos,
+        size_t & end);
 
     // Writer and reader's local state.
-    struct alignas(CACHE_LINE_SIZE) LocalState
+    struct alignas(DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE) LocalState
     {
         LocalState()
         : buffer(nullptr)
@@ -114,7 +184,7 @@ private:
     LocalState m_Reader;
 
     // Writer and reader's shared positions.
-    struct alignas(CACHE_LINE_SIZE) SharedState
+    struct alignas(DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE) SharedState
     {
         std::atomic<size_t> pos;
     };
@@ -206,3 +276,5 @@ GetBufferSpaceToReadFrom(size_t & pos, size_t & end)
         }
     }
 }
+
+} // namespace daugaard
