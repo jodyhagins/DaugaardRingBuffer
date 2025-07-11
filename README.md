@@ -2,7 +2,7 @@
 ## Summary
 
 This repo contains Kaspar Daugaard's RingBuffer as published on his blog 
-(http://daugaard.org/blog/writing-a-fast-and-versatile-spsc-ring-buffer).
+(https://daugaard.org/blog/writing-a-fast-and-versatile-spsc-ring-buffer).
 
 The original source code file, as copied from the blog, is in
 `src/daugaard/original.hpp`.
@@ -40,3 +40,31 @@ The repo needed a license file, and so I provided the MIT license as per
 Kaspar's email.
 
 However, note his comment about the API.
+
+
+## Using the Library
+
+The library is header-only.
+
+There are currently no tests, but I will add some over time.
+
+Builds support cmake, and you should be able to simply grab the code and run cmake.
+If not specified, `CMAKE_BUILD_TYPE` will default to `Debug` and
+`CMAKE_CXX_STANDARD` will default to `20`.
+
+You can just copy the files or use FetchContent.
+
+Here is how I do it.
+
+```cmake
+FetchContent_Declare(
+    DaugaardRingBuffer
+    GIT_REPOSITORY https://github.com/jodyhagins/DaugaardRingBuffer.git
+    GIT_TAG main # or better, a specific tag/SHA
+    SYSTEM
+    )
+FetchContent_MakeAvailable(DaugaardRingBuffer)
+
+# Then, when referencing it
+target_link_libraries(my_target PRIVATE wjh::ipc)
+```
