@@ -1,8 +1,12 @@
+#ifndef DAUGAARD_RING_BUFFER_f7dd9731f3e947a1a2b8a17ac2296854
+#define DAUGAARD_RING_BUFFER_f7dd9731f3e947a1a2b8a17ac2296854
+
 // Copyright 2018 Kaspar Daugaard. For educational purposes only.
 // See http://daugaard.org/blog/writing-a-fast-and-versatile-spsc-ring-buffer
 
 #include <algorithm>
 #include <atomic>
+#include <memory>
 #include <new>
 #include <stdexcept>
 
@@ -29,10 +33,53 @@
 #include <cstdio>
 #include <cstdlib>
 
+namespace daugaard::rb::detail {
+/**
+ * Try to get a pointer to an active lifetime object.
+ *
+ * This doesn't really matter within the same process, because the lifetime was
+ * started with placement new, but it doesn't cost anything in those cases
+ * either.
+ */
+template <typename T>
+[[nodiscard]]
+T *
+start_shm_lifetime(void * p) noexcept
+{
+#if defined(__cpp_lib_start_lifetime_as)
+    // The right thing to do...
+    return std::start_lifetime_as<T>(p);
+#else
+    #if (__cplusplus >= 201703L)
+    // This is NOT right, but, it's something.  Assume its lifetime has been
+    // implicitly started, which may or may not be true, but the compiler
+    // may or may not be able to prove it (e.g., bytes mmap'd into the
+    // address space).
+    return std::launder(reinterpret_cast<T *>(p));
+    #else
+    // Even more not right than the previous one...
+    return reinterpret_cast<T *>(p);
+    #endif
+#endif
+}
+
+template <typename T>
+[[nodiscard]]
+T *
+start_shm_lifetime(void * p, [[maybe_unused]] std::size_t n) noexcept
+{
+#if defined(__cpp_lib_start_lifetime_as)
+    return std::start_lifetime_as_array<T>(p, n);
+#else
+    return start_shm_lifetime(p);
+#endif
+}
+} // namespace daugaard::rb::detail
+  //
 #if defined(__APPLE__)
     #include <sys/sysctl.h>
 
-namespace daugaard::detail {
+namespace daugaard::rb::detail {
 inline std::size_t
 get_runtime_cache_line_size()
 {
@@ -41,11 +88,11 @@ get_runtime_cache_line_size()
     sysctlbyname("hw.cachelinesize", &line_size, &size, nullptr, 0);
     return static_cast<std::size_t>(line_size);
 }
-} // namespace daugaard::detail
+} // namespace daugaard::rb::detail
 #elif defined(__linux__)
     #include <unistd.h>
 
-namespace daugaard::detail {
+namespace daugaard::rb::detail {
 inline std::size_t
 get_runtime_cache_line_size()
 {
@@ -55,23 +102,27 @@ get_runtime_cache_line_size()
     }
     return static_cast<std::size_t>(line_size);
 }
-} // namespace daugaard::detail
+} // namespace daugaard::rb::detail
 #else
-namespace daugaard::detail {
+namespace daugaard::rb::detail {
 inline std::size_t
 get_runtime_cache_line_size()
 {
     return static_cast<std::size_t>(-1);
 }
-} // namespace daugaard::detail
+} // namespace daugaard::rb::detail
 #endif
 
 
-namespace daugaard {
+namespace daugaard::rb {
 
 class RingBuffer
 {
 public:
+    inline static constexpr int major = 1;
+    inline static constexpr int minor = 0;
+    inline static constexpr int patch = 0;
+
     // Allocate buffer space for writing.
     DAUGAARD_RING_BUFFER_FORCE_INLINE void * PrepareWrite(
         size_t size,
@@ -96,7 +147,7 @@ public:
     {
         void * dest = PrepareWrite(sizeof(T) * count, alignof(T));
         for (size_t i = 0; i < count; i++) {
-            new (static_cast<T *>(dest) + i) T(values[i]);
+            new (static_cast<void *>(static_cast<T *>(dest) + i)) T(values[i]);
         }
     }
 
@@ -113,7 +164,7 @@ public:
     DAUGAARD_RING_BUFFER_FORCE_INLINE const T & Read()
     {
         void * src = PrepareRead(sizeof(T), alignof(T));
-        return *static_cast<T *>(src);
+        return *detail::start_shm_lifetime<T>(src);
     }
 
     // Read an array of elements from the buffer.
@@ -121,7 +172,7 @@ public:
     DAUGAARD_RING_BUFFER_FORCE_INLINE const T * ReadArray(size_t count)
     {
         void * src = PrepareRead(sizeof(T) * count, alignof(T));
-        return static_cast<T *>(src);
+        return detail::start_shm_lifetime<T>(src, count);
     }
 
     // Initialize. Buffer must have required alignment. Size must be a power of
@@ -134,8 +185,19 @@ public:
             throw std::runtime_error("wrong cache line size");
         }
         Reset();
-        m_Reader.buffer = m_Writer.buffer = static_cast<char *>(buffer);
+        ReattachReader(buffer);
+        ReattachWriter(buffer);
         m_Reader.size = m_Writer.size = m_Writer.end = size;
+    }
+
+    void ReattachReader(void * buffer)
+    {
+        m_Reader.buffer = static_cast<char *>(buffer);
+    }
+
+    void ReattachWriter(void * buffer)
+    {
+        m_Writer.buffer = static_cast<char *>(buffer);
     }
 
     void Reset()
@@ -147,12 +209,16 @@ public:
 private:
     DAUGAARD_RING_BUFFER_FORCE_INLINE static size_t Align(
         size_t pos,
-        size_t alignment)
+        [[maybe_unused]] size_t alignment)
     {
-#ifdef RINGBUFFER_DO_NOT_ALIGN
-        alignment = 1;
-#endif
+#ifdef DAUGAARD_RING_BUFFER_DO_NOT_ALIGN
+        // If you disable this, then all bets are off for treating the objects
+        // in the queue as implicit lifetime, because the standard requires
+        // properly aligned objects in these cases.
+        return pos;
+#else
         return (pos + alignment - 1) & ~(alignment - 1);
+#endif
     }
 
     DAUGAARD_RING_BUFFER_FORCE_INLINE void GetBufferSpaceToWriteTo(
@@ -277,4 +343,10 @@ GetBufferSpaceToReadFrom(size_t & pos, size_t & end)
     }
 }
 
+} // namespace daugaard::rb
+
+namespace daugaard {
+using rb::RingBuffer;
 } // namespace daugaard
+
+#endif // DAUGAARD_RING_BUFFER_f7dd9731f3e947a1a2b8a17ac2296854
