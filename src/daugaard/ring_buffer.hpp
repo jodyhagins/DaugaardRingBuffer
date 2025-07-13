@@ -55,13 +55,17 @@
     #endif
 #endif
 
+#ifndef DAUGAARD_RING_BUFFER_NAMESPACE
+    #define DAUGAARD_RING_BUFFER_NAMESPACE daugaard
+#endif
+
 #include <cstdio>
 #include <cstdlib>
 
 #if defined(__APPLE__)
     #include <sys/sysctl.h>
 
-namespace daugaard::rb::detail {
+namespace DAUGAARD_RING_BUFFER_NAMESPACE::rb::detail {
 inline std::size_t
 get_runtime_cache_line_size()
 {
@@ -70,11 +74,11 @@ get_runtime_cache_line_size()
     sysctlbyname("hw.cachelinesize", &line_size, &size, nullptr, 0);
     return static_cast<std::size_t>(line_size);
 }
-} // namespace daugaard::rb::detail
+} // namespace DAUGAARD_RING_BUFFER_NAMESPACE::rb::detail
 #elif defined(__linux__)
     #include <unistd.h>
 
-namespace daugaard::rb::detail {
+namespace DAUGAARD_RING_BUFFER_NAMESPACE::rb::detail {
 inline std::size_t
 get_runtime_cache_line_size()
 {
@@ -84,19 +88,19 @@ get_runtime_cache_line_size()
     }
     return static_cast<std::size_t>(line_size);
 }
-} // namespace daugaard::rb::detail
+} // namespace DAUGAARD_RING_BUFFER_NAMESPACE::rb::detail
 #else
-namespace daugaard::rb::detail {
+namespace DAUGAARD_RING_BUFFER_NAMESPACE::rb::detail {
 inline std::size_t
 get_runtime_cache_line_size()
 {
     return static_cast<std::size_t>(-1);
 }
-} // namespace daugaard::rb::detail
+} // namespace DAUGAARD_RING_BUFFER_NAMESPACE::rb::detail
 #endif
 
 
-namespace daugaard::rb {
+namespace DAUGAARD_RING_BUFFER_NAMESPACE::rb {
 
 class RingBuffer
 {
@@ -341,10 +345,10 @@ GetBufferSpaceToReadFrom(size_t & pos, size_t & end)
     }
 }
 
-} // namespace daugaard::rb
+} // namespace DAUGAARD_RING_BUFFER_NAMESPACE::rb
 
-namespace daugaard {
+namespace DAUGAARD_RING_BUFFER_NAMESPACE {
 using rb::RingBuffer;
-} // namespace daugaard
+} // namespace DAUGAARD_RING_BUFFER_NAMESPACE
 
 #endif // DAUGAARD_RING_BUFFER_f7dd9731f3e947a1a2b8a17ac2296854
