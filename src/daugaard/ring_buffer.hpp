@@ -4,9 +4,34 @@
 // Copyright 2018 Kaspar Daugaard. For educational purposes only.
 // See http://daugaard.org/blog/writing-a-fast-and-versatile-spsc-ring-buffer
 
+// The code presented here is the same as on the website, with the following
+// changes.
+//
+// 1. Reformatted using clang-format so I can keep changes easy to manage.
+//
+// 2. Macros changed to be prefixed with DAUGAARD_RING_BUFFER_
+//
+// 3. DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE can be computed by the cmake
+//    because std::hardware_destructive_interference_size is wrong on some
+//    macOS/clang compilers.  The actual cache line is queried and checked
+//    in the Initialize member function.  In addition, buffer size and
+//    alignment are also checked in Initialize.
+//
+// 4. The RingBuffer class is inside the daugaard namespace.
+//
+// 5. major/minor/patch static constexpr values have been added.
+//
+// 6. Assert that alignments are a power of two and reads/writes greater
+//    than the buffer size aren't attempted.
+//
+// 7. ReattachReader and ReattachWriter have been added to allow the reader
+//    and writer to separately set the pointer to the queue memory.  This
+//    allows setting the value when the queue memory is shared between
+//    processes.
+
 #include <algorithm>
 #include <atomic>
-#include <memory>
+#include <cassert>
 #include <new>
 #include <stdexcept>
 
@@ -33,49 +58,6 @@
 #include <cstdio>
 #include <cstdlib>
 
-namespace daugaard::rb::detail {
-/**
- * Try to get a pointer to an active lifetime object.
- *
- * This doesn't really matter within the same process, because the lifetime was
- * started with placement new, but it doesn't cost anything in those cases
- * either.
- */
-template <typename T>
-[[nodiscard]]
-T *
-start_shm_lifetime(void * p) noexcept
-{
-#if defined(__cpp_lib_start_lifetime_as)
-    // The right thing to do...
-    return std::start_lifetime_as<T>(p);
-#else
-    #if (__cplusplus >= 201703L)
-    // This is NOT right, but, it's something.  Assume its lifetime has been
-    // implicitly started, which may or may not be true, but the compiler
-    // may or may not be able to prove it (e.g., bytes mmap'd into the
-    // address space).
-    return std::launder(reinterpret_cast<T *>(p));
-    #else
-    // Even more not right than the previous one...
-    return reinterpret_cast<T *>(p);
-    #endif
-#endif
-}
-
-template <typename T>
-[[nodiscard]]
-T *
-start_shm_lifetime(void * p, [[maybe_unused]] std::size_t n) noexcept
-{
-#if defined(__cpp_lib_start_lifetime_as)
-    return std::start_lifetime_as_array<T>(p, n);
-#else
-    return start_shm_lifetime(p);
-#endif
-}
-} // namespace daugaard::rb::detail
-  //
 #if defined(__APPLE__)
     #include <sys/sysctl.h>
 
@@ -164,7 +146,7 @@ public:
     DAUGAARD_RING_BUFFER_FORCE_INLINE const T & Read()
     {
         void * src = PrepareRead(sizeof(T), alignof(T));
-        return *detail::start_shm_lifetime<T>(src);
+        return *static_cast<T *>(src);
     }
 
     // Read an array of elements from the buffer.
@@ -172,7 +154,7 @@ public:
     DAUGAARD_RING_BUFFER_FORCE_INLINE const T * ReadArray(size_t count)
     {
         void * src = PrepareRead(sizeof(T) * count, alignof(T));
-        return detail::start_shm_lifetime<T>(src, count);
+        return static_cast<T *>(src);
     }
 
     // Initialize. Buffer must have required alignment. Size must be a power of
@@ -184,6 +166,16 @@ public:
         {
             throw std::runtime_error("wrong cache line size");
         }
+        if (reinterpret_cast<std::uintptr_t>(buffer) %
+                DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE !=
+            0)
+        {
+            throw std::runtime_error("buffer is not aligned on cache line");
+        }
+        if (not is_power_of_two(size)) {
+            throw std::runtime_error("size must be a power of two");
+        }
+
         Reset();
         ReattachReader(buffer);
         ReattachWriter(buffer);
@@ -207,16 +199,20 @@ public:
     }
 
 private:
+    template <typename T>
+    static constexpr bool is_power_of_two(T t)
+    {
+        return t > 0 && (t & (t - 1)) == 0;
+    }
+
     DAUGAARD_RING_BUFFER_FORCE_INLINE static size_t Align(
         size_t pos,
         [[maybe_unused]] size_t alignment)
     {
 #ifdef DAUGAARD_RING_BUFFER_DO_NOT_ALIGN
-        // If you disable this, then all bets are off for treating the objects
-        // in the queue as implicit lifetime, because the standard requires
-        // properly aligned objects in these cases.
         return pos;
 #else
+        assert(is_power_of_two(alignment));
         return (pos + alignment - 1) & ~(alignment - 1);
 #endif
     }
@@ -265,6 +261,7 @@ PrepareWrite(size_t size, size_t alignment)
 {
     size_t pos = Align(m_Writer.pos, alignment);
     size_t end = pos + size;
+    assert(end - m_Writer.pos <= m_Writer.size);
     if (end > m_Writer.end) {
         GetBufferSpaceToWriteTo(pos, end);
     }
@@ -287,6 +284,7 @@ PrepareRead(size_t size, size_t alignment)
 {
     size_t pos = Align(m_Reader.pos, alignment);
     size_t end = pos + size;
+    assert(end - m_Reader.pos <= m_Reader.size);
     if (end > m_Reader.end) {
         GetBufferSpaceToReadFrom(pos, end);
     }
