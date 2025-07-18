@@ -28,6 +28,14 @@
 //    and writer to separately set the pointer to the queue memory.  This
 //    allows setting the value when the queue memory is shared between
 //    processes.
+//
+// 8. Turn the class into a template, parameterized on the atomic type,
+//    because std::atomic is not an implicit lifetime type as of C++20.
+//    Also, removed the default ctor on LocalState, as it did nothing
+//    more than a zero-initilized construction would do, and having it
+//    meant that the class was not trivially default constructible.
+//    This is not absolutely necessary, but means that it can only
+//    combine with other things that are trivially move/copy.
 
 #include <algorithm>
 #include <atomic>
@@ -102,7 +110,8 @@ get_runtime_cache_line_size()
 
 namespace DAUGAARD_RING_BUFFER_NAMESPACE::rb {
 
-class RingBuffer
+template <typename AtomicT>
+class TRingBuffer
 {
 public:
     inline static constexpr int major = 1;
@@ -199,7 +208,8 @@ public:
     void Reset()
     {
         m_Reader = m_Writer = LocalState();
-        m_ReaderShared.pos = m_WriterShared.pos = 0;
+        m_ReaderShared.pos.store(0, std::memory_order_seq_cst);
+        m_WriterShared.pos.store(0, std::memory_order_seq_cst);
     }
 
 private:
@@ -231,14 +241,6 @@ private:
     // Writer and reader's local state.
     struct alignas(DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE) LocalState
     {
-        LocalState()
-        : buffer(nullptr)
-        , pos(0)
-        , end(0)
-        , base(0)
-        , size(0)
-        { }
-
         char * buffer;
         size_t pos;
         size_t end;
@@ -252,15 +254,16 @@ private:
     // Writer and reader's shared positions.
     struct alignas(DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE) SharedState
     {
-        std::atomic<size_t> pos;
+        AtomicT pos;
     };
 
     SharedState m_WriterShared;
     SharedState m_ReaderShared;
 };
 
+template <typename AtomicT>
 void *
-RingBuffer::
+TRingBuffer<AtomicT>::
 PrepareWrite(size_t size, size_t alignment)
 {
     size_t pos = Align(m_Writer.pos, alignment);
@@ -273,8 +276,9 @@ PrepareWrite(size_t size, size_t alignment)
     return m_Writer.buffer + pos;
 }
 
+template <typename AtomicT>
 void
-RingBuffer::
+TRingBuffer<AtomicT>::
 FinishWrite()
 {
     m_WriterShared.pos.store(
@@ -282,8 +286,9 @@ FinishWrite()
         std::memory_order_release);
 }
 
+template <typename AtomicT>
 void *
-RingBuffer::
+TRingBuffer<AtomicT>::
 PrepareRead(size_t size, size_t alignment)
 {
     size_t pos = Align(m_Reader.pos, alignment);
@@ -296,8 +301,9 @@ PrepareRead(size_t size, size_t alignment)
     return m_Reader.buffer + pos;
 }
 
+template <typename AtomicT>
 void
-RingBuffer::
+TRingBuffer<AtomicT>::
 FinishRead()
 {
     m_ReaderShared.pos.store(
@@ -305,8 +311,9 @@ FinishRead()
         std::memory_order_release);
 }
 
+template <typename AtomicT>
 void
-RingBuffer::
+TRingBuffer<AtomicT>::
 GetBufferSpaceToWriteTo(size_t & pos, size_t & end)
 {
     if (end > m_Writer.size) {
@@ -325,8 +332,9 @@ GetBufferSpaceToWriteTo(size_t & pos, size_t & end)
     }
 }
 
+template <typename AtomicT>
 void
-RingBuffer::
+TRingBuffer<AtomicT>::
 GetBufferSpaceToReadFrom(size_t & pos, size_t & end)
 {
     if (end > m_Reader.size) {
@@ -345,10 +353,15 @@ GetBufferSpaceToReadFrom(size_t & pos, size_t & end)
     }
 }
 
+struct RingBuffer
+: TRingBuffer<std::atomic<size_t>>
+{ };
+
 } // namespace DAUGAARD_RING_BUFFER_NAMESPACE::rb
 
 namespace DAUGAARD_RING_BUFFER_NAMESPACE {
 using rb::RingBuffer;
+using rb::TRingBuffer;
 } // namespace DAUGAARD_RING_BUFFER_NAMESPACE
 
 #endif // DAUGAARD_RING_BUFFER_f7dd9731f3e947a1a2b8a17ac2296854

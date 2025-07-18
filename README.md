@@ -144,3 +144,11 @@ The following are the major differences from the original source code.
       allows setting the value when the queue memory is shared between
       processes.
 
+    + Turn the class into a template, parameterized on the atomic type,
+      because std::atomic is not an implicit lifetime type as of C++20.
+      Also, removed the default ctor on LocalState, as it did nothing
+      more than a zero-initilized construction would do, and having it
+      meant that the class was not trivially default constructible.
+      This is not absolutely necessary, but means that it can only
+      combine with other things that are trivially move/copy.
+
