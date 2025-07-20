@@ -54,12 +54,11 @@
     #endif
 #endif
 
-#if not defined(DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE)
-    #if defined(__cpp_lib_hardware_interference_size)
-        #define DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE \
-            (std::hardware_destructive_interference_size)
+#ifndef DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE
+    #if defined(__APPLE__) && defined(__aarch64__)
+        #define DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE 128
     #else
-        #error "cache line size is not defined"
+        #define DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE 64
     #endif
 #endif
 

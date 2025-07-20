@@ -85,25 +85,27 @@ If not defined, the outer namespace is `daugaard`.
 
 If defined, this value will be used as the cache line size.
 
-If not defined, `std::hardware_destructive_interference_size` will be used,
-if `__cpp_lib_hardware_interference_size` is defined.
+Otherwise, it will be set to a default value (128 for apple/aarch64,
+64 for everything else) when
+`DAUGAARD_RING_BUFFER_DETERMINE_CACHE_LINE_SIZE` is enabled.
 
-Otherwise, a compiler error will be generated.
+Clang on some hardware (e.g., apple silicon) produces wrong values for
+`std::hardware_destructive_interference_size`.
+Further investigation makes me wary of using it in headers:
+ https://github.com/llvm/llvm-project/pull/89446/commits/9d394964d3d04c9d7ffd753751f2aaa3a96c9480.
 
 #### DAUGAARD_RING_BUFFER_DETERMINE_CACHE_LINE_SIZE
 
-This option is default OFF on all platforms except macOS with Clang, which
-has a bug that sets std::hardware_destructive_interference_size to the
-wrong value on some hardware.  It is default ON for macOS/Clang.
+This option is default ON for arm64, and default OFF for all platforms.
 
 When ON, and `DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE` is not defined, the
 cmake process will run a command to determine the cache line size on that
 particular machine, and then set `DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE`
 to the resulting value.
 
-Due to this known bug, there is a check in `RingBuffer::Initialize` that
-will do a runtime check, and throws an exception if the cache line
-determined at runtime is different from `DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE`.
+There is a check in `RingBuffer::Initialize` that will do a runtime check,
+and throws an exception if the cache line determined at runtime is different
+from `DAUGAARD_RING_BUFFER_CACHE_LINE_SIZE`.
 
 #### DAUGAARD_RING_BUFFER_FORCE_INLINE
 
